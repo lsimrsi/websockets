@@ -96,37 +96,9 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         return;
     }
 
-    // receive single message from a client (we can either receive or send with socket).
-    // this will likely be the Pong for our Ping or a hello message from client.
-    // waiting for message from a client will block this task, but will not block other client's
-    // connections.
-    if let Some(msg) = socket.recv().await {
-        if let Ok(msg) = msg {
-            if process_message(msg, who).is_break() {
-                return;
-            }
-        } else {
-            println!("client {who} abruptly disconnected");
-            return;
-        }
-    }
-
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
     let (mut sender, mut receiver) = socket.split();
-
-    // Spawn a task that will push several messages to the client (does not matter what client does)
-    // let mut send_task = tokio::spawn(async move {
-    //     if let Err(e) = sender
-    //         .send(Message::Close(Some(CloseFrame {
-    //             code: axum::extract::ws::close_code::NORMAL,
-    //             reason: Cow::from("Goodbye"),
-    //         })))
-    //         .await
-    //     {
-    //         println!("Error sending close: {}.", e);
-    //     }
-    // });
 
     // This second task will receive messages from client and print them on server console
     let _recv_task = tokio::spawn(async move {
@@ -134,30 +106,12 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
             if process_message(msg, who).is_break() {
-                println!("--- Break received.");
-                continue;
+                println!("Break received.");
+                break;
             }
         }
         cnt
     });
-
-    // If any one of the tasks exit, abort the other.
-    // tokio::select! {
-    //     // rv_a = (&mut send_task) => {
-    //     //     match rv_a {
-    //     //         Ok(_) => println!("message sent to {}", who),
-    //     //         Err(err) => println!("Error sending messages {:?}", err)
-    //     //     }
-    //     //     // recv_task.abort();
-    //     // },
-    //     rv_b = (&mut recv_task) => {
-    //         match rv_b {
-    //             Ok(b) => println!("Received {} messages", b),
-    //             Err(err) => println!("Error receiving messages {:?}", err)
-    //         }
-    //         send_task.abort();
-    //     }
-    // }
 
     // returning from the handler closes the websocket connection
     println!("Websocket context {} destroyed", who);
