@@ -29,6 +29,10 @@
 
   function onSubmit(e) {
     e.preventDefault();
+    if ($socket == null) {
+      console.log("Socket is null");
+      return;
+    }
     $socket.send(JSON.stringify({ name, message }));
   }
 </script>
