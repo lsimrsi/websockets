@@ -1,21 +1,3 @@
-//! Example websocket server.
-//!
-//! Run the server with
-//! ```not_rust
-//! cargo run -p example-websockets --bin example-websockets
-//! ```
-//!
-//! Run a browser client with
-//! ```not_rust
-//! firefox http://localhost:8080
-//! ```
-//!
-//! Alternatively you can run the rust client (showing two
-//! concurrent websocket connections being established) with
-//! ```not_rust
-//! cargo run -p example-websockets --bin example-client
-//! ```
-
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -39,6 +21,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 //allows to extract the IP of connecting user
 use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::CloseFrame;
+use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
 use futures::{sink::SinkExt, stream::StreamExt};
@@ -72,6 +55,12 @@ async fn main() {
         .serve(app.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ChatMessage {
+    name: String,
+    message: String,
 }
 
 /// The handler for the HTTP request (this gets called when the HTTP GET lands at the start
@@ -122,22 +111,6 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         }
     }
 
-    // Since each client gets individual statemachine, we can pause handling
-    // when necessary to wait for some external event (in this case illustrated by sleeping).
-    // Waiting for this client to finish getting its greetings does not prevent other clients from
-    // connecting to server and receiving their greetings.
-    for i in 1..5 {
-        if socket
-            .send(Message::Text(format!("Hi {i} times!")))
-            .await
-            .is_err()
-        {
-            println!("client {who} abruptly disconnected");
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
     let (mut sender, mut receiver) = socket.split();
@@ -176,7 +149,6 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
-            // print message and break if instructed to do so
             if process_message(msg, who).is_break() {
                 break;
             }
@@ -210,6 +182,12 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
 fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
+            match serde_json::from_str::<ChatMessage>(&t) {
+                Ok(chat_msg) => {
+                    println!("{}: {}", chat_msg.name, chat_msg.message);
+                }
+                Err(_) => return ControlFlow::Break(()),
+            }
             println!(">>> {} sent str: {:?}", who, t);
         }
         Message::Binary(d) => {
