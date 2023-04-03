@@ -8,7 +8,6 @@ use axum::{
     Router,
 };
 
-use std::borrow::Cow;
 use std::ops::ControlFlow;
 use std::{net::SocketAddr, path::PathBuf};
 use tower_http::{
@@ -18,13 +17,11 @@ use tower_http::{
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-//allows to extract the IP of connecting user
 use axum::extract::connect_info::ConnectInfo;
-use axum::extract::ws::CloseFrame;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::{sink::SinkExt, stream::StreamExt};
+use futures::stream::StreamExt;
 
 #[tokio::main]
 async fn main() {
@@ -98,7 +95,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
 
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
-    let (mut sender, mut receiver) = socket.split();
+    let (_sender, mut receiver) = socket.split();
 
     // This second task will receive messages from client and print them on server console
     let _recv_task = tokio::spawn(async move {
