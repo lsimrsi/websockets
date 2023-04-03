@@ -135,7 +135,7 @@ fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
             } else {
                 println!(">>> {} somehow sent close message without CloseFrame", who);
             }
-            // return ControlFlow::Break(());
+            return ControlFlow::Break(());
         }
 
         Message::Pong(v) => {
