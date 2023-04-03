@@ -120,15 +120,12 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
 /// helper to print contents of messages to stdout. Has special treatment for Close.
 fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
     match msg {
-        Message::Text(t) => {
-            match serde_json::from_str::<ChatMessage>(&t) {
-                Ok(chat_msg) => {
-                    println!("{}: {}", chat_msg.name, chat_msg.message);
-                }
-                Err(_) => (),
+        Message::Text(t) => match serde_json::from_str::<ChatMessage>(&t) {
+            Ok(chat_msg) => {
+                println!("{}: {}", chat_msg.name, chat_msg.message);
             }
-            println!(">>> {} sent str: {:?}", who, t);
-        }
+            Err(_) => println!(">>> {} sent str: {:?}", who, t),
+        },
         Message::Binary(d) => {
             println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
         }
