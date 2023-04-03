@@ -116,63 +116,48 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
     let (mut sender, mut receiver) = socket.split();
 
     // Spawn a task that will push several messages to the client (does not matter what client does)
-    let mut send_task = tokio::spawn(async move {
-        let n_msg = 20;
-        for i in 0..n_msg {
-            // In case of any websocket error, we exit.
-            if sender
-                .send(Message::Text(format!("Server message {i} ...")))
-                .await
-                .is_err()
-            {
-                return i;
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        }
-
-        println!("Sending close to {who}...");
-        if let Err(e) = sender
-            .send(Message::Close(Some(CloseFrame {
-                code: axum::extract::ws::close_code::NORMAL,
-                reason: Cow::from("Goodbye"),
-            })))
-            .await
-        {
-            println!("Could not send Close due to {}, probably it is ok?", e);
-        }
-        n_msg
-    });
+    // let mut send_task = tokio::spawn(async move {
+    //     if let Err(e) = sender
+    //         .send(Message::Close(Some(CloseFrame {
+    //             code: axum::extract::ws::close_code::NORMAL,
+    //             reason: Cow::from("Goodbye"),
+    //         })))
+    //         .await
+    //     {
+    //         println!("Error sending close: {}.", e);
+    //     }
+    // });
 
     // This second task will receive messages from client and print them on server console
-    let mut recv_task = tokio::spawn(async move {
+    let _recv_task = tokio::spawn(async move {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
             if process_message(msg, who).is_break() {
-                break;
+                println!("--- Break received.");
+                continue;
             }
         }
         cnt
     });
 
     // If any one of the tasks exit, abort the other.
-    tokio::select! {
-        rv_a = (&mut send_task) => {
-            match rv_a {
-                Ok(a) => println!("{} messages sent to {}", a, who),
-                Err(a) => println!("Error sending messages {:?}", a)
-            }
-            recv_task.abort();
-        },
-        rv_b = (&mut recv_task) => {
-            match rv_b {
-                Ok(b) => println!("Received {} messages", b),
-                Err(b) => println!("Error receiving messages {:?}", b)
-            }
-            send_task.abort();
-        }
-    }
+    // tokio::select! {
+    //     // rv_a = (&mut send_task) => {
+    //     //     match rv_a {
+    //     //         Ok(_) => println!("message sent to {}", who),
+    //     //         Err(err) => println!("Error sending messages {:?}", err)
+    //     //     }
+    //     //     // recv_task.abort();
+    //     // },
+    //     rv_b = (&mut recv_task) => {
+    //         match rv_b {
+    //             Ok(b) => println!("Received {} messages", b),
+    //             Err(err) => println!("Error receiving messages {:?}", err)
+    //         }
+    //         send_task.abort();
+    //     }
+    // }
 
     // returning from the handler closes the websocket connection
     println!("Websocket context {} destroyed", who);
@@ -186,7 +171,7 @@ fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
                 Ok(chat_msg) => {
                     println!("{}: {}", chat_msg.name, chat_msg.message);
                 }
-                Err(_) => return ControlFlow::Break(()),
+                Err(_) => (),
             }
             println!(">>> {} sent str: {:?}", who, t);
         }
@@ -202,7 +187,7 @@ fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
             } else {
                 println!(">>> {} somehow sent close message without CloseFrame", who);
             }
-            return ControlFlow::Break(());
+            // return ControlFlow::Break(());
         }
 
         Message::Pong(v) => {
