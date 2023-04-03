@@ -1,7 +1,31 @@
 <script lang="ts">
-  import svelteLogo from './assets/svelte.svg'
-  import viteLogo from '/vite.svg'
-  import Counter from './lib/Counter.svelte'
+  import svelteLogo from "./assets/svelte.svg";
+  import viteLogo from "/vite.svg";
+  import Counter from "./lib/Counter.svelte";
+  import { socket } from "./stores";
+  import { onMount } from "svelte";
+
+  onMount(async () => {
+    if ($socket != null) return;
+
+    let newSocket = new WebSocket("ws://127.0.0.1:8080/ws");
+
+    newSocket.onopen = function (this: WebSocket, ev: Event) {
+      console.log("Connected");
+      this.send("hello from client");
+    };
+
+    newSocket.onclose = function () {
+      console.log("Disconnected");
+      $socket = null;
+    };
+
+    newSocket.onmessage = function (res: any) {
+      console.log("data", res.data);
+    };
+
+    $socket = newSocket;
+  });
 </script>
 
 <main>
@@ -20,12 +44,14 @@
   </div>
 
   <p>
-    Check out <a href="https://github.com/sveltejs/kit#readme" target="_blank" rel="noreferrer">SvelteKit</a>, the official Svelte app framework powered by Vite!
+    Check out <a
+      href="https://github.com/sveltejs/kit#readme"
+      target="_blank"
+      rel="noreferrer">SvelteKit</a
+    >, the official Svelte app framework powered by Vite!
   </p>
 
-  <p class="read-the-docs">
-    Click on the Vite and Svelte logos to learn more
-  </p>
+  <p class="read-the-docs">Click on the Vite and Svelte logos to learn more</p>
 </main>
 
 <style>
