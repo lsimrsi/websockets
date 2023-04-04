@@ -101,7 +101,7 @@ async fn ws_handler(
     println!("`{user_agent}` at {addr} connected.");
     // Finalize the upgrade process by returning upgrade callback.
     // We can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, state.clone()))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection).
