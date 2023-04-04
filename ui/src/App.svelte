@@ -1,9 +1,11 @@
 <script lang="ts">
   import { socket } from "./stores";
   import { onMount } from "svelte";
+  import type { Message, ServerMessage } from "./interfaces";
 
   let name = "";
   let message = "";
+  let messages: Message[] = [];
 
   onMount(async () => {
     if ($socket != null) return;
@@ -12,7 +14,6 @@
 
     newSocket.onopen = function (this: WebSocket, ev: Event) {
       console.log("Connected");
-      this.send("hello from client");
     };
 
     newSocket.onclose = function () {
@@ -20,8 +21,16 @@
       $socket = null;
     };
 
-    newSocket.onmessage = function (res: any) {
-      console.log("data", res.data);
+    newSocket.onmessage = function (res: MessageEvent<any>) {
+      console.log("res.data", res.data);
+
+      let serverMsg = JSON.parse(res.data);
+
+      if (serverMsg.msg_type === "AllMessages") {
+        console.log("case ran");
+        messages = serverMsg.data;
+        console.log("messages", messages);
+      }
     };
 
     $socket = newSocket;
@@ -38,9 +47,11 @@
 </script>
 
 <main>
-  <div>
-    <p />
-  </div>
+  <ul>
+    {#each messages as msg}
+      <li>{msg.name}: {msg.message}</li>
+    {/each}
+  </ul>
 
   <form class="flex flex-col bg-yellow-400" on:submit={onSubmit}>
     <label for="name">Enter name:</label>

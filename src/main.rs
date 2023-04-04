@@ -27,8 +27,27 @@ use futures::stream::StreamExt;
 
 type SharedState = Arc<RwLock<ServerState>>;
 
+#[derive(Serialize, Deserialize)]
+pub struct ChatMessage {
+    name: String,
+    message: String,
+}
+
 pub struct ServerState {
     messages: Vec<ChatMessage>,
+}
+
+#[derive(Serialize)]
+pub enum ServerMessageType {
+    AllMessages,
+    NewMessage,
+}
+
+/// Messages sent from server to client.
+#[derive(Serialize)]
+pub struct ServerMessage {
+    msg_type: ServerMessageType,
+    data: serde_json::Value,
 }
 
 #[tokio::main]
@@ -64,12 +83,6 @@ async fn main() {
         .unwrap();
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ChatMessage {
-    name: String,
-    message: String,
-}
-
 /// The handler for the HTTP request (this gets called when the HTTP GET lands at the start of websocket negotiation).
 /// After this completes, the actual switching from HTTP to websocket protocol will occur.
 /// This is the last point where we can extract TCP/IP metadata such as IP address of the client
@@ -95,21 +108,29 @@ async fn ws_handler(
 async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedState) {
     //send a ping (unsupported by some browsers) just to kick things off and get a response
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-        println!("Pinged {}...", who);
+        println!("<<< Pinged {}...", who);
     } else {
-        println!("Could not send ping {}!", who);
+        println!("Could not send ping to {}!", who);
         // No error here since the only thing we can do is close the connection.
         // If we can not send messages, there is no way to salvage the state machine anyway.
         return;
     }
 
-    if !socket
-        .send(Message::Text(
-            json!(state.read().await.messages).to_string(),
-        ))
-        .await
-        .is_ok()
-    {
+    let all_messages = ServerMessage {
+        msg_type: ServerMessageType::AllMessages,
+        data: json!(state.read().await.messages),
+    };
+
+    let all_messages = match serde_json::to_string(&all_messages) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("Could not convert all messages to string");
+            return;
+        }
+    };
+
+    if !socket.send(Message::Text(all_messages)).await.is_ok() {
+        println!("Could not send all messages to client.");
         return;
     };
 
