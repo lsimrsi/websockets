@@ -8,7 +8,7 @@ use axum::{
     Router,
 };
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use std::{net::SocketAddr, path::PathBuf};
 use std::{ops::ControlFlow, sync::Arc};
@@ -23,9 +23,9 @@ use axum::extract::connect_info::ConnectInfo;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::stream::StreamExt;
+use futures::{stream::StreamExt, SinkExt};
 
-type SharedState = Arc<RwLock<ServerState>>;
+type SharedState = Arc<ServerState>;
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -34,7 +34,8 @@ pub struct ChatMessage {
 }
 
 pub struct ServerState {
-    messages: Vec<ChatMessage>,
+    messages: RwLock<Vec<ChatMessage>>,
+    tx: broadcast::Sender<String>,
 }
 
 #[derive(Serialize)]
@@ -60,10 +61,12 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let (tx, _rx) = broadcast::channel(100);
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-    let shared_state = Arc::new(RwLock::new(ServerState {
-        messages: Vec::new(),
-    }));
+    let shared_state = Arc::new(ServerState {
+        messages: RwLock::new(Vec::new()),
+        tx,
+    });
 
     let app = Router::new()
         .fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
@@ -118,7 +121,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
 
     let all_messages = ServerMessage {
         msg_type: ServerMessageType::AllMessages,
-        data: json!(state.read().await.messages),
+        data: json!(*state.messages.read().await),
     };
 
     let all_messages = match serde_json::to_string(&all_messages) {
@@ -134,11 +137,26 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         return;
     };
 
+    let mut rx = state.tx.subscribe();
+
     // By splitting socket we can send and receive at the same time.
-    let (_sender, mut receiver) = socket.split();
+    let (mut sender, mut receiver) = socket.split();
+
+    let mut send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            println!(
+                "------------------------------------ send task msg: {}",
+                msg
+            );
+            // In any websocket error, break loop.
+            if sender.send(Message::Text(msg)).await.is_err() {
+                break;
+            }
+        }
+    });
 
     // Task to eceive messages from the client.
-    let _recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
@@ -150,6 +168,12 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         cnt
     });
 
+    // If any one of the tasks run to completion, we abort the other.
+    tokio::select! {
+        _ = (&mut send_task) => recv_task.abort(),
+        _ = (&mut recv_task) => send_task.abort(),
+    };
+
     println!("Websocket context {} destroyed", who);
 }
 
@@ -158,7 +182,12 @@ async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> C
         Message::Text(t) => match serde_json::from_str::<ChatMessage>(&t) {
             Ok(chat_msg) => {
                 println!("{}: {}", chat_msg.name, chat_msg.message);
-                state.write().await.messages.push(chat_msg);
+                let message = ServerMessage {
+                    msg_type: ServerMessageType::NewMessage,
+                    data: json!(&chat_msg),
+                };
+                state.messages.write().await.push(chat_msg);
+                let _ = state.tx.send(serde_json::to_string(&message).unwrap());
             }
             Err(_) => println!(">>> {} sent str: {:?}", who, t),
         },

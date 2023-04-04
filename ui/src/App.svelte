@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { socket } from "./stores";
+  import { messages, socket } from "./stores";
   import { onMount } from "svelte";
   import type { Message, ServerMessage } from "./interfaces";
 
   let name = "";
   let message = "";
-  let messages: Message[] = [];
 
   onMount(async () => {
     if ($socket != null) return;
@@ -26,11 +25,16 @@
 
       let serverMsg = JSON.parse(res.data);
 
-      if (serverMsg.msg_type === "AllMessages") {
-        console.log("case ran");
-        messages = serverMsg.data;
-        console.log("messages", messages);
+      switch (serverMsg.msg_type) {
+        case "AllMessages":
+          $messages = serverMsg.data;
+          break;
+        case "NewMessage":
+          $messages = [...$messages, serverMsg.data];
+          break;
       }
+
+      console.log("messages", $messages);
     };
 
     $socket = newSocket;
@@ -48,7 +52,7 @@
 
 <main>
   <ul>
-    {#each messages as msg}
+    {#each $messages as msg}
       <li>{msg.name}: {msg.message}</li>
     {/each}
   </ul>
