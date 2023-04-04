@@ -23,7 +23,7 @@ use axum::extract::connect_info::ConnectInfo;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::{future::Shared, stream::StreamExt};
+use futures::stream::StreamExt;
 
 type SharedState = Arc<RwLock<ServerState>>;
 
@@ -46,7 +46,6 @@ async fn main() {
         messages: Vec::new(),
     }));
 
-    // build our application with some routes
     let app = Router::new()
         .fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
         .route("/ws", get(ws_handler))
@@ -57,7 +56,6 @@ async fn main() {
         )
         .with_state(Arc::clone(&shared_state));
 
-    // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
     tracing::debug!("listening on {}", addr);
     axum::Server::bind(&addr)
@@ -72,11 +70,10 @@ pub struct ChatMessage {
     message: String,
 }
 
-/// The handler for the HTTP request (this gets called when the HTTP GET lands at the start
-/// of websocket negotiation). After this completes, the actual switching from HTTP to
-/// websocket protocol will occur.
+/// The handler for the HTTP request (this gets called when the HTTP GET lands at the start of websocket negotiation).
+/// After this completes, the actual switching from HTTP to websocket protocol will occur.
 /// This is the last point where we can extract TCP/IP metadata such as IP address of the client
-/// as well as things from HTTP headers such as user-agent of the browser etc.
+/// as well as things from HTTP headers, such as user-agent of the browser.
 async fn ws_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
@@ -89,20 +86,20 @@ async fn ws_handler(
         String::from("Unknown browser")
     };
     println!("`{user_agent}` at {addr} connected.");
-    // finalize the upgrade process by returning upgrade callback.
-    // we can customize the callback by sending additional info such as address.
+    // Finalize the upgrade process by returning upgrade callback.
+    // We can customize the callback by sending additional info such as address.
     ws.on_upgrade(move |socket| handle_socket(socket, addr, state.clone()))
 }
 
-/// Actual websocket statemachine (one will be spawned per connection)
+/// Actual websocket statemachine (one will be spawned per connection).
 async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedState) {
     //send a ping (unsupported by some browsers) just to kick things off and get a response
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {}...", who);
     } else {
         println!("Could not send ping {}!", who);
-        // no Error here since the only thing we can do is to close the connection.
-        // If we can not send messages, there is no way to salvage the statemachine anyway.
+        // No error here since the only thing we can do is close the connection.
+        // If we can not send messages, there is no way to salvage the state machine anyway.
         return;
     }
 
@@ -116,11 +113,10 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         return;
     };
 
-    // By splitting socket we can send and receive at the same time. In this example we will send
-    // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
+    // By splitting socket we can send and receive at the same time.
     let (_sender, mut receiver) = socket.split();
 
-    // This second task will receive messages from client and print them on server console
+    // Task to eceive messages from the client.
     let _recv_task = tokio::spawn(async move {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
@@ -133,11 +129,9 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         cnt
     });
 
-    // returning from the handler closes the websocket connection
     println!("Websocket context {} destroyed", who);
 }
 
-/// helper to print contents of messages to stdout. Has special treatment for Close.
 async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => match serde_json::from_str::<ChatMessage>(&t) {
@@ -165,9 +159,8 @@ async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> C
         Message::Pong(v) => {
             println!(">>> {} sent pong with {:?}", who, v);
         }
-        // You should never need to manually handle Message::Ping, as axum's websocket library
-        // will do so for you automagically by replying with Pong and copying the v according to
-        // spec. But if you need the contents of the pings you can see them here.
+        // You should never need to manually handle Message::Ping.
+        // Axum's websocket library will do so automagically.
         Message::Ping(v) => {
             println!(">>> {} sent ping with {:?}", who, v);
         }
