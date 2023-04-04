@@ -1,15 +1,17 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        TypedHeader,
+        State, TypedHeader,
     },
     response::IntoResponse,
     routing::get,
     Router,
 };
+use serde_json::json;
+use tokio::sync::RwLock;
 
-use std::ops::ControlFlow;
 use std::{net::SocketAddr, path::PathBuf};
+use std::{ops::ControlFlow, sync::Arc};
 use tower_http::{
     services::ServeDir,
     trace::{DefaultMakeSpan, TraceLayer},
@@ -21,7 +23,13 @@ use axum::extract::connect_info::ConnectInfo;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::stream::StreamExt;
+use futures::{future::Shared, stream::StreamExt};
+
+type SharedState = Arc<RwLock<ServerState>>;
+
+pub struct ServerState {
+    messages: Vec<ChatMessage>,
+}
 
 #[tokio::main]
 async fn main() {
@@ -34,6 +42,9 @@ async fn main() {
         .init();
 
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
+    let shared_state = Arc::new(RwLock::new(ServerState {
+        messages: Vec::new(),
+    }));
 
     // build our application with some routes
     let app = Router::new()
@@ -43,7 +54,8 @@ async fn main() {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
-        );
+        )
+        .with_state(Arc::clone(&shared_state));
 
     // run it with hyper
     let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
@@ -69,6 +81,7 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     user_agent: Option<TypedHeader<headers::UserAgent>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<SharedState>,
 ) -> impl IntoResponse {
     let user_agent = if let Some(TypedHeader(user_agent)) = user_agent {
         user_agent.to_string()
@@ -78,11 +91,11 @@ async fn ws_handler(
     println!("`{user_agent}` at {addr} connected.");
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| handle_socket(socket, addr))
+    ws.on_upgrade(move |socket| handle_socket(socket, addr, state.clone()))
 }
 
 /// Actual websocket statemachine (one will be spawned per connection)
-async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
+async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedState) {
     //send a ping (unsupported by some browsers) just to kick things off and get a response
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {}...", who);
@@ -93,6 +106,16 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         return;
     }
 
+    if !socket
+        .send(Message::Text(
+            json!(state.read().await.messages).to_string(),
+        ))
+        .await
+        .is_ok()
+    {
+        return;
+    };
+
     // By splitting socket we can send and receive at the same time. In this example we will send
     // unsolicited messages to client based on some sort of server's internal event (i.e .timer).
     let (_sender, mut receiver) = socket.split();
@@ -102,7 +125,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
         let mut cnt = 0;
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
-            if process_message(msg, who).is_break() {
+            if process_message(msg, who, state.clone()).await.is_break() {
                 println!("Break received.");
                 break;
             }
@@ -115,11 +138,12 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr) {
 }
 
 /// helper to print contents of messages to stdout. Has special treatment for Close.
-fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
+async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => match serde_json::from_str::<ChatMessage>(&t) {
             Ok(chat_msg) => {
                 println!("{}: {}", chat_msg.name, chat_msg.message);
+                state.write().await.messages.push(chat_msg);
             }
             Err(_) => println!(">>> {} sent str: {:?}", who, t),
         },
