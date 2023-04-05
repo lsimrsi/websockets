@@ -1,10 +1,16 @@
 <script lang="ts">
   import { messages, socket } from "./stores";
-  import { onMount } from "svelte";
-  import type { Message, ServerMessage } from "./interfaces";
+  import { afterUpdate, onMount } from "svelte";
 
   let name = "";
   let message = "";
+  let chatWindow: HTMLUListElement | null = null;
+
+  afterUpdate(() => {
+    if (chatWindow) {
+      chatWindow.scrollTo(0, chatWindow.scrollHeight);
+    }
+  });
 
   onMount(async () => {
     if ($socket != null) return;
@@ -50,21 +56,23 @@
   }
 </script>
 
-<main>
-  <ul>
-    {#each $messages as msg}
-      <li>{msg.name}: {msg.message}</li>
-    {/each}
-  </ul>
+<main class="flex h-screen overflow-hidden">
+  <div class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5">
+    <ul class="overflow-y-scroll" bind:this={chatWindow}>
+      {#each $messages as msg}
+        <li>{msg.name}: {msg.message}</li>
+      {/each}
+    </ul>
 
-  <form class="flex flex-col bg-yellow-400" on:submit={onSubmit}>
-    <label for="name">Enter name:</label>
-    <input id="name" bind:value={name} />
+    <form class="flex flex-col bg-yellow-400" on:submit={onSubmit}>
+      <label for="name">Enter name:</label>
+      <input id="name" bind:value={name} />
 
-    <label for="chat-message">Enter message:</label>
-    <textarea id="chat-message" bind:value={message} />
-    <input type="submit" value="Send" />
-  </form>
+      <label for="chat-message">Enter message:</label>
+      <textarea id="chat-message" bind:value={message} />
+      <input type="submit" value="Send" />
+    </form>
+  </div>
 </main>
 
 <style>
