@@ -23,7 +23,10 @@ use axum::extract::connect_info::ConnectInfo;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::{stream::StreamExt, SinkExt};
+use futures::{
+    stream::{SplitSink, StreamExt},
+    SinkExt,
+};
 
 type SharedState = Arc<ServerState>;
 
@@ -33,21 +36,63 @@ pub struct ChatMessage {
     message: String,
 }
 
-pub struct ServerState {
-    messages: RwLock<Vec<ChatMessage>>,
+pub struct Room {
+    state: RwLock<RoomState>,
     tx: broadcast::Sender<String>,
 }
 
-#[derive(Serialize)]
+impl Room {
+    pub fn new(tx: broadcast::Sender<String>) -> Room {
+        Room {
+            state: RwLock::new(RoomState::new()),
+            tx,
+        }
+    }
+}
+
+pub struct RoomState {
+    users: Vec<String>,
+    messages: Vec<ChatMessage>,
+}
+
+impl RoomState {
+    pub fn new() -> RoomState {
+        RoomState {
+            users: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+}
+
+pub struct ServerState {
+    room: Room,
+}
+
+#[derive(Serialize, Debug)]
 pub enum ServerMessageType {
     AllMessages,
     NewMessage,
+    NameTaken,
+    NameRegistered,
+}
+
+#[derive(Deserialize, Debug)]
+pub enum ClientMessageType {
+    RegisterName,
+    Chat,
 }
 
 /// Messages sent from server to client.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ServerMessage {
     msg_type: ServerMessageType,
+    data: serde_json::Value,
+}
+
+/// Messages sent from client to server.
+#[derive(Deserialize, Debug)]
+pub struct ClientMessage {
+    msg_type: ClientMessageType,
     data: serde_json::Value,
 }
 
@@ -64,8 +109,7 @@ async fn main() {
     let (tx, _rx) = broadcast::channel(100);
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
     let shared_state = Arc::new(ServerState {
-        messages: RwLock::new(Vec::new()),
-        tx,
+        room: Room::new(tx),
     });
 
     let app = Router::new()
@@ -121,7 +165,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
 
     let all_messages = ServerMessage {
         msg_type: ServerMessageType::AllMessages,
-        data: json!(*state.messages.read().await),
+        data: json!(*state.room.state.read().await.messages),
     };
 
     let all_messages = match serde_json::to_string(&all_messages) {
@@ -137,57 +181,91 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         return;
     };
 
-    let mut rx = state.tx.subscribe();
+    let mut rx = state.room.tx.subscribe();
+
+    // while let Ok(msg) = rx.recv().await {
+    //     println!(
+    //         "------------------------------------ send task msg: {}",
+    //         msg
+    //     );
+    //     // In any websocket error, break loop.
+    //     if sender.send(Message::Text(msg)).await.is_err() {
+    //         break;
+    //     }
+    // }
 
     // By splitting socket we can send and receive at the same time.
-    let (mut sender, mut receiver) = socket.split();
+    // let (mut sender, mut receiver) = socket.split();
 
-    let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
+    // let sender_send_task = sender.clone();
+    // let mut send_task = tokio::spawn(async move {
+    //     while let Ok(msg) = rx.recv().await {
+    //         println!("--------------- send task msg: {}", msg);
+    //         // In any websocket error, break loop.
+    //         if sender.send(Message::Text(msg)).await.is_err() {
+    //             break;
+    //         }
+    //     }
+    // });
+
+    // Task to receive messages from the client.
+    // let mut recv_task = tokio::spawn(async move {
+    //     loop {
+    //         if let Some(Ok(msg)) = receiver.next().await {
+    //             if process_message(msg, &mut sender, who, state.clone())
+    //                 .await
+    //                 .is_break()
+    //             {
+    //                 println!("Break received for {}.", who);
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // });
+
+    loop {
+        println!("waiting for rx");
+        if let Ok(msg) = rx.try_recv() {
             println!(
                 "------------------------------------ send task msg: {}",
                 msg
             );
             // In any websocket error, break loop.
-            if sender.send(Message::Text(msg)).await.is_err() {
+            if socket.send(Message::Text(msg)).await.is_err() {
                 break;
             }
         }
-    });
-
-    // Task to eceive messages from the client.
-    let mut recv_task = tokio::spawn(async move {
-        let mut cnt = 0;
-        while let Some(Ok(msg)) = receiver.next().await {
-            cnt += 1;
-            if process_message(msg, who, state.clone()).await.is_break() {
-                println!("Break received.");
+        if let Some(Ok(msg)) = socket.recv().await {
+            println!("waiting for process msg");
+            if process_message(msg, &mut socket, who, state.clone())
+                .await
+                .is_break()
+            {
+                println!("Break received for {}.", who);
                 break;
             }
         }
-        cnt
-    });
+    }
 
     // If any one of the tasks run to completion, we abort the other.
-    tokio::select! {
-        _ = (&mut send_task) => recv_task.abort(),
-        _ = (&mut recv_task) => send_task.abort(),
-    };
+    // tokio::select! {
+    //     // _ = (&mut send_task) => recv_task.abort(),
+    //     _ = (&mut recv_task) => recv_task.abort(),
+    // };
 
     println!("Websocket context {} destroyed", who);
 }
 
-async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> ControlFlow<(), ()> {
+async fn process_message(
+    msg: Message,
+    socket: &mut WebSocket,
+    who: SocketAddr,
+    state: SharedState,
+) -> ControlFlow<(), ()> {
     match msg {
-        Message::Text(t) => match serde_json::from_str::<ChatMessage>(&t) {
-            Ok(chat_msg) => {
-                println!("{}: {}", chat_msg.name, chat_msg.message);
-                let message = ServerMessage {
-                    msg_type: ServerMessageType::NewMessage,
-                    data: json!(&chat_msg),
-                };
-                state.messages.write().await.push(chat_msg);
-                let _ = state.tx.send(serde_json::to_string(&message).unwrap());
+        Message::Text(t) => match serde_json::from_str::<ClientMessage>(&t) {
+            Ok(client_msg) => {
+                return process_client_message(client_msg, socket, who, state).await;
             }
             Err(_) => println!(">>> {} sent str: {:?}", who, t),
         },
@@ -213,6 +291,83 @@ async fn process_message(msg: Message, who: SocketAddr, state: SharedState) -> C
         // Axum's websocket library will do so automagically.
         Message::Ping(v) => {
             println!(">>> {} sent ping with {:?}", who, v);
+        }
+    }
+    ControlFlow::Continue(())
+}
+
+async fn process_client_message(
+    client_msg: ClientMessage,
+    socket: &mut WebSocket,
+    who: SocketAddr,
+    state: SharedState,
+) -> ControlFlow<(), ()> {
+    println!(">>> client message: {:?}", client_msg);
+    match client_msg.msg_type {
+        ClientMessageType::RegisterName => {
+            let name: String = match serde_json::from_value(client_msg.data) {
+                Ok(n) => n,
+                Err(err) => {
+                    println!("Could not parse name: {}", err);
+                    return ControlFlow::Continue(());
+                }
+            };
+
+            if name.is_empty() {
+                println!("Name was empty.");
+                return ControlFlow::Continue(());
+            }
+
+            {
+                let users = &state.room.state.read().await.users;
+
+                if users.contains(&name) {
+                    let server_msg = ServerMessage {
+                        msg_type: ServerMessageType::NameTaken,
+                        data: json!(""),
+                    };
+                    if socket
+                        .send(Message::Text(json!(&server_msg).to_string()))
+                        .await
+                        .is_err()
+                    {
+                        return ControlFlow::Break(());
+                    };
+                    return ControlFlow::Continue(());
+                }
+            }
+
+            {
+                let users = &mut state.room.state.write().await.users;
+                users.push(name);
+            }
+
+            let server_msg = ServerMessage {
+                msg_type: ServerMessageType::NameRegistered,
+                data: json!(""),
+            };
+            if socket
+                .send(Message::Text(json!(&server_msg).to_string()))
+                .await
+                .is_err()
+            {
+                return ControlFlow::Break(());
+            };
+        }
+        ClientMessageType::Chat => {
+            let chat_msg: ChatMessage = match serde_json::from_value(client_msg.data.clone()) {
+                Ok(cm) => cm,
+                Err(err) => {
+                    println!("Could not deserialize chat message: {}", err);
+                    return ControlFlow::Continue(());
+                }
+            };
+            let server_msg = ServerMessage {
+                msg_type: ServerMessageType::NewMessage,
+                data: client_msg.data,
+            };
+            state.room.state.write().await.messages.push(chat_msg);
+            let _ = state.room.tx.send(json!(&server_msg).to_string());
         }
     }
     ControlFlow::Continue(())

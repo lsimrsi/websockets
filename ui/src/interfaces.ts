@@ -3,7 +3,7 @@ export interface ServerMessage {
   data: any;
 }
 
-export interface Message {
+export interface ChatMessage {
   name: string;
   message: string;
 }
