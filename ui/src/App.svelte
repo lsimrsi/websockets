@@ -3,6 +3,7 @@
   import { afterUpdate, onMount } from "svelte";
   import Login from "./lib/login.svelte";
   import { sendMessage } from "./utility-functions";
+  import Button from "./lib/button.svelte";
 
   let message = "";
   let chatWindow: HTMLUListElement | null = null;
@@ -69,17 +70,22 @@
   {#if !$hasRegisteredName}
     <Login />
   {:else}
-    <div class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5">
-      <ul class="overflow-y-scroll" bind:this={chatWindow}>
+    <div class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5 gap-2">
+      <ul class="overflow-y-scroll border rounded p-4" bind:this={chatWindow}>
         {#each $messages as msg}
           <li>{msg.name}: {msg.message}</li>
         {/each}
       </ul>
 
-      <form class="flex flex-col bg-yellow-400" on:submit={onSubmit}>
+      <form class="flex flex-col" on:submit={onSubmit}>
         <label for="chat-message">Enter message:</label>
-        <textarea id="chat-message" bind:value={message} />
-        <input type="submit" value="Send" />
+        <input
+          class="border mb-2"
+          type="text"
+          id="chat-message"
+          bind:value={message}
+        />
+        <Button classes="w-fit" id="send-message" value="Send" />
       </form>
     </div>
   {/if}
