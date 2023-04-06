@@ -63,6 +63,7 @@
       return;
     }
     sendMessage({ msg_type: "Chat", data: { name: $name, message } });
+    message = "";
   }
 </script>
 
