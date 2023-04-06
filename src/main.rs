@@ -186,7 +186,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
     // Forwards messages from mpsc to sink.
     let mut forward_task = tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
-            println!("<<< {}: {:?}", who, message);
+            println!("<<<--- {}: {:?}", who, message);
             if sink
                 .send(Message::Text(json!(message).to_string()))
                 .await
@@ -244,10 +244,10 @@ async fn process_message(
             Ok(client_msg) => {
                 return process_client_message(client_msg, sender, who, state).await;
             }
-            Err(_) => println!(">>> {} sent str: {:?}", who, t),
+            Err(_) => println!("--->>> {} sent str: {:?}", who, t),
         },
         Message::Binary(d) => {
-            println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
+            println!("--->>> {} sent {} bytes: {:?}", who, d.len(), d);
         }
         Message::Close(c) => {
             if let Some(cf) = c {
@@ -256,18 +256,21 @@ async fn process_message(
                     who, cf.code, cf.reason
                 );
             } else {
-                println!(">>> {} somehow sent close message without CloseFrame", who);
+                println!(
+                    "--->>> {} somehow sent close message without CloseFrame",
+                    who
+                );
             }
             return ControlFlow::Break(());
         }
 
         Message::Pong(v) => {
-            println!(">>> {} sent pong with {:?}", who, v);
+            println!("--->>> {} sent pong with {:?}", who, v);
         }
         // You should never need to manually handle Message::Ping.
         // Axum's websocket library will do so automagically.
         Message::Ping(v) => {
-            println!(">>> {} sent ping with {:?}", who, v);
+            println!("--->>> {} sent ping with {:?}", who, v);
         }
     }
     ControlFlow::Continue(())
@@ -279,7 +282,7 @@ async fn process_client_message(
     who: SocketAddr,
     state: SharedState,
 ) -> ControlFlow<(), ()> {
-    println!(">>> client message from {}: {:?}", who, client_msg);
+    println!("--->>> client message from {}: {:?}", who, client_msg);
     match client_msg.msg_type {
         ClientMessageType::RegisterName => {
             let name: String = match serde_json::from_value(client_msg.data) {
