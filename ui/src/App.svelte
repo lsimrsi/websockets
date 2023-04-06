@@ -73,7 +73,10 @@
     <Login />
   {:else}
     <div class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5 gap-2">
-      <ul class="overflow-y-scroll border rounded p-4" bind:this={chatWindow}>
+      <ul
+        class="overflow-y-scroll border rounded-lg p-4"
+        bind:this={chatWindow}
+      >
         {#each $messages as msg}
           <li>{msg.name}: {msg.message}</li>
         {/each}
