@@ -4,6 +4,7 @@
   import Login from "./lib/login.svelte";
   import { sendMessage } from "./utility-functions";
   import Button from "./lib/button.svelte";
+  import Input from "./lib/input.svelte";
 
   let message = "";
   let chatWindow: HTMLUListElement | null = null;
@@ -79,10 +80,9 @@
       </ul>
 
       <form class="flex flex-col" on:submit={onSubmit}>
-        <label for="chat-message">Enter message:</label>
-        <input
-          class="border mb-2"
-          type="text"
+        <Input
+          classes="mb-2"
+          label="Enter message"
           id="chat-message"
           bind:value={message}
         />
