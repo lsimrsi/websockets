@@ -8,7 +8,11 @@ use axum::{
     Router,
 };
 use serde_json::json;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{
+    broadcast,
+    mpsc::{self, Sender},
+    RwLock,
+};
 
 use std::{net::SocketAddr, path::PathBuf};
 use std::{ops::ControlFlow, sync::Arc};
@@ -38,11 +42,12 @@ pub struct ChatMessage {
 
 pub struct Room {
     state: RwLock<RoomState>,
-    tx: broadcast::Sender<String>,
+    tx: broadcast::Sender<ServerMessage>,
 }
 
 impl Room {
-    pub fn new(tx: broadcast::Sender<String>) -> Room {
+    pub fn new() -> Room {
+        let (tx, _rx) = broadcast::channel(100);
         Room {
             state: RwLock::new(RoomState::new()),
             tx,
@@ -68,7 +73,7 @@ pub struct ServerState {
     room: Room,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub enum ServerMessageType {
     AllMessages,
     NewMessage,
@@ -83,7 +88,7 @@ pub enum ClientMessageType {
 }
 
 /// Messages sent from server to client.
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone)]
 pub struct ServerMessage {
     msg_type: ServerMessageType,
     data: serde_json::Value,
@@ -106,11 +111,8 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let (tx, _rx) = broadcast::channel(100);
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-    let shared_state = Arc::new(ServerState {
-        room: Room::new(tx),
-    });
+    let shared_state = Arc::new(ServerState { room: Room::new() });
 
     let app = Router::new()
         .fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
@@ -183,6 +185,24 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
 
     let mut rx = state.room.tx.subscribe();
 
+    let (mut sink, mut stream) = socket.split();
+    let (sender, mut receiver) = mpsc::channel::<ServerMessage>(16);
+
+    // Forwards messages from mpsc to sink.
+    let mut forward_task = tokio::spawn(async move {
+        while let Some(message) = receiver.recv().await {
+            println!("<<< {:?}", message);
+            if sink
+                .send(Message::Text(json!(message).to_string()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+
+    // let new_socket = socket.
     // while let Ok(msg) = rx.recv().await {
     //     println!(
     //         "------------------------------------ send task msg: {}",
@@ -197,75 +217,75 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
     // By splitting socket we can send and receive at the same time.
     // let (mut sender, mut receiver) = socket.split();
 
-    // let sender_send_task = sender.clone();
-    // let mut send_task = tokio::spawn(async move {
-    //     while let Ok(msg) = rx.recv().await {
-    //         println!("--------------- send task msg: {}", msg);
-    //         // In any websocket error, break loop.
-    //         if sender.send(Message::Text(msg)).await.is_err() {
-    //             break;
-    //         }
-    //     }
-    // });
+    let rx_sender = sender.clone();
+    let mut rx_task = tokio::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            // In any websocket error, break loop.
+            if rx_sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
 
     // Task to receive messages from the client.
-    // let mut recv_task = tokio::spawn(async move {
-    //     loop {
-    //         if let Some(Ok(msg)) = receiver.next().await {
-    //             if process_message(msg, &mut sender, who, state.clone())
-    //                 .await
-    //                 .is_break()
-    //             {
-    //                 println!("Break received for {}.", who);
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // });
+    let mut stream_sender = sender.clone();
+    let mut stream_task = tokio::spawn(async move {
+        loop {
+            if let Some(Ok(msg)) = stream.next().await {
+                if process_message(msg, &mut stream_sender, who, state.clone())
+                    .await
+                    .is_break()
+                {
+                    println!("Break received for {}.", who);
+                    break;
+                }
+            }
+        }
+    });
 
-    loop {
-        println!("waiting for rx");
-        if let Ok(msg) = rx.try_recv() {
-            println!(
-                "------------------------------------ send task msg: {}",
-                msg
-            );
-            // In any websocket error, break loop.
-            if socket.send(Message::Text(msg)).await.is_err() {
-                break;
-            }
-        }
-        if let Some(Ok(msg)) = socket.recv().await {
-            println!("waiting for process msg");
-            if process_message(msg, &mut socket, who, state.clone())
-                .await
-                .is_break()
-            {
-                println!("Break received for {}.", who);
-                break;
-            }
-        }
-    }
+    // loop {
+    // println!("waiting for rx try_recv");
+    // if let Ok(msg) = rx.try_recv() {
+    //     println!(
+    //         "------------------------------------ send task msg: {}",
+    //         msg
+    //     );
+    //     // In any websocket error, break loop.
+    //     if socket.send(Message::Text(msg)).await.is_err() {
+    //         break;
+    //     }
+    // }
+    // println!("waiting for socket recv");
+    // if let Some(Ok(msg)) = socket.recv().await {
+    //     if process_message(msg, &mut socket, who, state.clone())
+    //         .await
+    //         .is_break()
+    //     {
+    //         println!("Break received for {}.", who);
+    //         break;
+    //     }
+    // }
+    // }
 
     // If any one of the tasks run to completion, we abort the other.
-    // tokio::select! {
-    //     // _ = (&mut send_task) => recv_task.abort(),
-    //     _ = (&mut recv_task) => recv_task.abort(),
-    // };
+    tokio::select! {
+        _ = (&mut forward_task) => stream_task.abort(),
+        _ = (&mut stream_task) => forward_task.abort(),
+    };
 
     println!("Websocket context {} destroyed", who);
 }
 
 async fn process_message(
     msg: Message,
-    socket: &mut WebSocket,
+    sender: &mut Sender<ServerMessage>,
     who: SocketAddr,
     state: SharedState,
 ) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => match serde_json::from_str::<ClientMessage>(&t) {
             Ok(client_msg) => {
-                return process_client_message(client_msg, socket, who, state).await;
+                return process_client_message(client_msg, sender, who, state).await;
             }
             Err(_) => println!(">>> {} sent str: {:?}", who, t),
         },
@@ -298,7 +318,7 @@ async fn process_message(
 
 async fn process_client_message(
     client_msg: ClientMessage,
-    socket: &mut WebSocket,
+    sender: &mut Sender<ServerMessage>,
     who: SocketAddr,
     state: SharedState,
 ) -> ControlFlow<(), ()> {
@@ -326,11 +346,7 @@ async fn process_client_message(
                         msg_type: ServerMessageType::NameTaken,
                         data: json!(""),
                     };
-                    if socket
-                        .send(Message::Text(json!(&server_msg).to_string()))
-                        .await
-                        .is_err()
-                    {
+                    if sender.send(server_msg).await.is_err() {
                         return ControlFlow::Break(());
                     };
                     return ControlFlow::Continue(());
@@ -346,11 +362,7 @@ async fn process_client_message(
                 msg_type: ServerMessageType::NameRegistered,
                 data: json!(""),
             };
-            if socket
-                .send(Message::Text(json!(&server_msg).to_string()))
-                .await
-                .is_err()
-            {
+            if sender.send(server_msg).await.is_err() {
                 return ControlFlow::Break(());
             };
         }
@@ -367,7 +379,7 @@ async fn process_client_message(
                 data: client_msg.data,
             };
             state.room.state.write().await.messages.push(chat_msg);
-            let _ = state.room.tx.send(json!(&server_msg).to_string());
+            let _ = state.room.tx.send(server_msg);
         }
     }
     ControlFlow::Continue(())
