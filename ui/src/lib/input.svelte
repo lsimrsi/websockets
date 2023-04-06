@@ -6,6 +6,6 @@
 </script>
 
 <div class="flex flex-col">
-  <label for={id}>{label}</label>
+  <label class="text-slate-600" for={id}>{label}</label>
   <input class={`border p-2 ${classes}`} {id} bind:value />
 </div>

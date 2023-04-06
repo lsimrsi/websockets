@@ -5,6 +5,7 @@
   import { sendMessage } from "./utility-functions";
   import Button from "./lib/button.svelte";
   import Input from "./lib/input.svelte";
+  import ChatMessage from "./lib/chat-message.svelte";
 
   let message = "";
   let chatWindow: HTMLUListElement | null = null;
@@ -68,7 +69,7 @@
   }
 </script>
 
-<main class="flex h-screen overflow-hidden">
+<main class="flex h-screen overflow-hidden bg-zinc-50">
   {#if !$hasRegisteredName}
     <Login />
   {:else}
@@ -78,7 +79,7 @@
         bind:this={chatWindow}
       >
         {#each $messages as msg}
-          <li>{msg.name}: {msg.message}</li>
+          <li><ChatMessage chatMsg={msg} /></li>
         {/each}
       </ul>
 
