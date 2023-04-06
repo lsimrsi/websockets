@@ -152,13 +152,11 @@ async fn ws_handler(
 
 /// Actual websocket statemachine (one will be spawned per connection).
 async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedState) {
-    //send a ping (unsupported by some browsers) just to kick things off and get a response
+    // Send a ping (unsupported by some browsers) to kick things off.
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("<<< Pinged {}...", who);
     } else {
-        println!("Could not send ping to {}!", who);
-        // No error here since the only thing we can do is close the connection.
-        // If we can not send messages, there is no way to salvage the state machine anyway.
+        println!("Could not send ping to {}.", who);
         return;
     }
 
@@ -188,7 +186,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
     // Forwards messages from mpsc to sink.
     let mut forward_task = tokio::spawn(async move {
         while let Some(message) = receiver.recv().await {
-            println!("<<< {:?}", message);
+            println!("<<< {}: {:?}", who, message);
             if sink
                 .send(Message::Text(json!(message).to_string()))
                 .await
@@ -199,6 +197,7 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         }
     });
 
+    // Task to receive messages from the room.
     let rx_sender = sender.clone();
     let mut rx_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
@@ -224,10 +223,11 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         }
     });
 
-    // If any one of the tasks run to completion, we abort the other.
+    // If any task runs to completion, abort the others.
     tokio::select! {
-        _ = (&mut forward_task) => stream_task.abort(),
-        _ = (&mut stream_task) => forward_task.abort(),
+        _ = (&mut forward_task) => {rx_task.abort(); stream_task.abort();},
+        _ = (&mut rx_task) => {forward_task.abort(); stream_task.abort();},
+        _ = (&mut stream_task) => {forward_task.abort(); rx_task.abort();},
     };
 
     println!("Websocket context {} destroyed", who);
@@ -279,7 +279,7 @@ async fn process_client_message(
     who: SocketAddr,
     state: SharedState,
 ) -> ControlFlow<(), ()> {
-    println!(">>> client message: {:?}", client_msg);
+    println!(">>> client message from {}: {:?}", who, client_msg);
     match client_msg.msg_type {
         ClientMessageType::RegisterName => {
             let name: String = match serde_json::from_value(client_msg.data) {
