@@ -64,6 +64,12 @@
       console.log("Socket is null");
       return;
     }
+
+    if (message.trim() === "") {
+      console.log("Message was empty.");
+      return;
+    }
+
     sendMessage({ msg_type: "Chat", data: { name: $name, message } });
     message = "";
   }
