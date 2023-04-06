@@ -27,10 +27,7 @@ use axum::extract::connect_info::ConnectInfo;
 use serde::{Deserialize, Serialize};
 
 //allows to split the websocket stream into separate TX and RX branches
-use futures::{
-    stream::{SplitSink, StreamExt},
-    SinkExt,
-};
+use futures::{stream::StreamExt, SinkExt};
 
 type SharedState = Arc<ServerState>;
 
@@ -202,25 +199,9 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
         }
     });
 
-    // let new_socket = socket.
-    // while let Ok(msg) = rx.recv().await {
-    //     println!(
-    //         "------------------------------------ send task msg: {}",
-    //         msg
-    //     );
-    //     // In any websocket error, break loop.
-    //     if sender.send(Message::Text(msg)).await.is_err() {
-    //         break;
-    //     }
-    // }
-
-    // By splitting socket we can send and receive at the same time.
-    // let (mut sender, mut receiver) = socket.split();
-
     let rx_sender = sender.clone();
     let mut rx_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            // In any websocket error, break loop.
             if rx_sender.send(msg).await.is_err() {
                 break;
             }
@@ -242,30 +223,6 @@ async fn handle_socket(mut socket: WebSocket, who: SocketAddr, state: SharedStat
             }
         }
     });
-
-    // loop {
-    // println!("waiting for rx try_recv");
-    // if let Ok(msg) = rx.try_recv() {
-    //     println!(
-    //         "------------------------------------ send task msg: {}",
-    //         msg
-    //     );
-    //     // In any websocket error, break loop.
-    //     if socket.send(Message::Text(msg)).await.is_err() {
-    //         break;
-    //     }
-    // }
-    // println!("waiting for socket recv");
-    // if let Some(Ok(msg)) = socket.recv().await {
-    //     if process_message(msg, &mut socket, who, state.clone())
-    //         .await
-    //         .is_break()
-    //     {
-    //         println!("Break received for {}.", who);
-    //         break;
-    //     }
-    // }
-    // }
 
     // If any one of the tasks run to completion, we abort the other.
     tokio::select! {
