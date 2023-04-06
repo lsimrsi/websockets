@@ -75,7 +75,7 @@
   {:else}
     <div class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5 gap-2">
       <ul
-        class="overflow-y-scroll border rounded-lg p-4"
+        class="overflow-y-scroll p-4 border rounded-lg bg-white"
         bind:this={chatWindow}
       >
         {#each $messages as msg}

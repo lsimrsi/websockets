@@ -3,11 +3,11 @@
   export let chatMsg: ChatMessage;
 </script>
 
-<div class="flex">
-  <span class="p-2 mb-1 bg-zinc-100 text-zinc-600">
+<div class="flex flex-col mb-4">
+  <span class="font-bold text-zinc-600 min-w-[8rem]">
     {chatMsg.name}
   </span>
-  <span class="p-2">
+  <span class="border-l-2 pl-4 text-zinc-500">
     {chatMsg.message}
   </span>
 </div>
