@@ -6,6 +6,7 @@
   import Button from "./lib/button.svelte";
   import Input from "./lib/input.svelte";
   import ChatMessage from "./lib/chat-message.svelte";
+  import Toasts from "./lib/toasts.svelte";
 
   let message = "";
   let chatWindow: HTMLUListElement | null = null;
@@ -76,6 +77,7 @@
 </script>
 
 <main class="flex h-screen overflow-hidden bg-zinc-50">
+  <Toasts />
   {#if !$hasRegisteredName}
     <Login />
   {:else}
