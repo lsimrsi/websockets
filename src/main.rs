@@ -76,6 +76,7 @@ pub enum ServerMessageType {
     NewMessage,
     NameTaken,
     NameRegistered,
+    Joined,
 }
 
 #[derive(Deserialize, Debug)]
@@ -315,14 +316,21 @@ async fn process_client_message(
 
             {
                 let users = &mut state.room.state.write().await.users;
-                users.push(name);
+                users.push(name.clone());
             }
 
             let server_msg = ServerMessage {
                 msg_type: ServerMessageType::NameRegistered,
                 data: json!(""),
             };
-            if sender.send(server_msg).await.is_err() {
+            if sender.send(server_msg.clone()).await.is_err() {
+                return ControlFlow::Break(());
+            };
+            let server_msg = ServerMessage {
+                msg_type: ServerMessageType::Joined,
+                data: json!(format!("{} joined.", name)),
+            };
+            if state.room.tx.send(server_msg).is_err() {
                 return ControlFlow::Break(());
             };
         }

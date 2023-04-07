@@ -62,6 +62,12 @@
           console.log("Name registered");
           $hasRegisteredName = true;
           break;
+        case "Joined":
+          $messages = [
+            ...$messages,
+            { name: serverMsg.data, message: "Hello, world!" },
+          ];
+          break;
       }
 
       console.log("messages", $messages);
