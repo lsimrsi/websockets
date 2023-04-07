@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { hasRegisteredName, messages, socket, name } from "./stores";
+  import { hasRegisteredName, messages, toasts, socket, name } from "./stores";
   import { afterUpdate, onMount } from "svelte";
   import Login from "./lib/login.svelte";
   import { sendMessage } from "./utility-functions";
@@ -7,6 +7,9 @@
   import Input from "./lib/input.svelte";
   import ChatMessage from "./lib/chat-message.svelte";
   import Toasts from "./lib/toasts.svelte";
+  import { ToastType } from "./interfaces";
+  import { v4 as uuidv4 } from "uuid";
+  import { TOAST_DURATION } from "./constants";
 
   let message = "";
   let chatWindow: HTMLUListElement | null = null;
@@ -44,7 +47,15 @@
           $messages = [...$messages, serverMsg.data];
           break;
         case "NameTaken":
-          console.log("Name taken");
+          let item = {
+            type: ToastType.Client,
+            message: "Name has already been taken.",
+            uuid: uuidv4(),
+          };
+          toasts.add(item);
+          setTimeout(() => {
+            toasts.remove(item);
+          }, TOAST_DURATION);
           $hasRegisteredName = false;
           break;
         case "NameRegistered":

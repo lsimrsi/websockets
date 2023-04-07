@@ -17,7 +17,6 @@ export interface Toast {
 /** Manages state for the toast queue. */
 export interface ToastItem extends Toast {
   uuid: string;
-  show: boolean;
 }
 
 export enum ToastType {

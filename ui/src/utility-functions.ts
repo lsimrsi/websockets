@@ -13,25 +13,3 @@ export function sendMessage(msg: ServerMessage) {
   console.log('sending msg', msg);
   $socket.send(JSON.stringify(msg));
 }
-
-/** Add a new toast to the queue. */
-function addNewToast(toast: Toast) {
-  let $toasts = get(toasts);
-  let uuid = uuidv4();
-  let item = {
-    type: toast.type,
-    message: toast.message,
-    uuid,
-    show: true,
-  };
-
-  $toasts = [...$toasts, item];
-
-  setTimeout(() => {
-    let $toastsLater = get(toasts);
-    let filteredToasts = $toastsLater.filter(
-      (ti: ToastItem) => ti.uuid !== item.uuid
-    );
-    $toastsLater = [...filteredToasts];
-  }, TOAST_DURATION);
-}
