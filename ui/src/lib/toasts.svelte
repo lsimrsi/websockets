@@ -12,7 +12,7 @@
       const transform = style.transform === "none" ? "" : style.transform;
 
       return {
-        duration: 600,
+        duration: 200,
         easing: quintOut,
         css: (t) => `
 					transform: ${transform} scale(${t});
@@ -28,7 +28,7 @@
     <div
       in:receive={{ key: toast.uuid }}
       out:send={{ key: toast.uuid }}
-      animate:flip
+      animate:flip={{ duration: 200 }}
       class={`flex right-0 w-96 transition-[top] rounded-bl-lg rounded-tr-lg mb-2 border shadow bg-white`}
     >
       <Toast {toast} />
