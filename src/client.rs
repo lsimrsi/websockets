@@ -12,18 +12,16 @@ use crate::{
 };
 
 pub struct Client {
-    name: String,
     socket: WebSocket,
-    who: SocketAddr,
+    socket_addr: SocketAddr,
     state: SharedState,
 }
 
 impl Client {
-    pub fn new(socket: WebSocket, who: SocketAddr, state: SharedState) -> Client {
+    pub fn new(socket: WebSocket, socket_addr: SocketAddr, state: SharedState) -> Client {
         Client {
-            name: "".to_string(),
             socket,
-            who,
+            socket_addr,
             state,
         }
     }
@@ -32,16 +30,13 @@ impl Client {
     pub async fn listen(mut self) {
         // Send a ping (unsupported by some browsers) to kick things off.
         if self.socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
-            println!("<<< Pinged {}...", self.who);
+            println!("<<< Pinged {}...", self.socket_addr);
         } else {
-            println!("Could not send ping to {}.", self.who);
+            println!("Could not send ping to {}.", self.socket_addr);
             return;
         }
 
-        let all_messages = ServerMessage {
-            msg_type: ServerMessageType::AllMessages,
-            data: json!(*self.state.room.state.read().await.messages),
-        };
+        let all_messages = self.state.get_messages_in_room(1).await;
 
         let all_messages = match serde_json::to_string(&all_messages) {
             Ok(s) => s,
@@ -56,15 +51,17 @@ impl Client {
             return;
         };
 
-        let mut rx = self.state.room.tx.subscribe();
-
         let (mut sink, mut stream) = self.socket.split();
         let (sender, mut receiver) = mpsc::channel::<ServerMessage>(16);
+
+        self.state
+            .add_socket(self.socket_addr, sender.clone())
+            .await;
 
         // Forwards messages from mpsc to sink.
         let mut forward_task = tokio::spawn(async move {
             while let Some(message) = receiver.recv().await {
-                println!("<<<--- {}: {:?}", self.who, message);
+                println!("<<<--- {}: {:?}", self.socket_addr, message);
                 if sink
                     .send(Message::Text(json!(message).to_string()))
                     .await
@@ -76,25 +73,30 @@ impl Client {
         });
 
         // Task to receive messages from the room.
-        let rx_sender = sender.clone();
-        let mut rx_task = tokio::spawn(async move {
-            while let Ok(msg) = rx.recv().await {
-                if rx_sender.send(msg).await.is_err() {
-                    break;
-                }
-            }
-        });
+        // let rx_sender = sender.clone();
+        // let mut rx_task = tokio::spawn(async move {
+        //     while let Ok(msg) = rx.recv().await {
+        //         if rx_sender.send(msg).await.is_err() {
+        //             break;
+        //         }
+        //     }
+        // });
 
         // Task to receive messages from the client.
         let mut stream_sender = sender.clone();
         let mut stream_task = tokio::spawn(async move {
             loop {
                 if let Some(Ok(msg)) = stream.next().await {
-                    if process_message(msg, &mut stream_sender, self.who, self.state.clone())
-                        .await
-                        .is_break()
+                    if process_message(
+                        msg,
+                        &mut stream_sender,
+                        self.socket_addr,
+                        self.state.clone(),
+                    )
+                    .await
+                    .is_break()
                     {
-                        println!("Break received for {}.", self.who);
+                        println!("Break received for {}.", self.socket_addr);
                         break;
                     }
                 }
@@ -103,12 +105,11 @@ impl Client {
 
         // If any task runs to completion, abort the others.
         tokio::select! {
-            _ = (&mut forward_task) => {rx_task.abort(); stream_task.abort();},
-            _ = (&mut rx_task) => {forward_task.abort(); stream_task.abort();},
-            _ = (&mut stream_task) => {forward_task.abort(); rx_task.abort();},
+            _ = (&mut forward_task) => {stream_task.abort();},
+            _ = (&mut stream_task) => {forward_task.abort();},
         };
 
-        println!("Websocket context {} destroyed", self.who);
+        println!("Websocket context {} destroyed", self.socket_addr);
     }
 }
 
@@ -158,10 +159,13 @@ async fn process_message(
 async fn process_client_message(
     client_msg: ClientMessage,
     sender: &mut Sender<ServerMessage>,
-    who: SocketAddr,
+    socket_addr: SocketAddr,
     state: SharedState,
 ) -> ControlFlow<(), ()> {
-    println!("--->>> client message from {}: {:?}", who, client_msg);
+    println!(
+        "--->>> client message from {}: {:?}",
+        socket_addr, client_msg
+    );
     match client_msg.msg_type {
         ClientMessageType::RegisterName => {
             let name: String = match serde_json::from_value(client_msg.data) {
@@ -177,25 +181,18 @@ async fn process_client_message(
                 return ControlFlow::Continue(());
             }
 
-            {
-                let room_users = &state.room.state.read().await.users;
-
-                if room_users.contains(&name) {
-                    let server_msg = ServerMessage {
-                        msg_type: ServerMessageType::NameTaken,
-                        data: json!(""),
-                    };
-                    if sender.send(server_msg).await.is_err() {
-                        return ControlFlow::Break(());
-                    };
-                    return ControlFlow::Continue(());
-                }
+            if !state.is_name_available(&name).await {
+                let server_msg = ServerMessage {
+                    msg_type: ServerMessageType::NameTaken,
+                    data: json!(""),
+                };
+                if sender.send(server_msg).await.is_err() {
+                    return ControlFlow::Break(());
+                };
+                return ControlFlow::Continue(());
             }
 
-            {
-                let users = &mut state.room.state.write().await.users;
-                users.push(name.clone());
-            }
+            state.set_name(name, socket_addr).await;
 
             let server_msg = ServerMessage {
                 msg_type: ServerMessageType::NameRegistered,
@@ -204,13 +201,8 @@ async fn process_client_message(
             if sender.send(server_msg.clone()).await.is_err() {
                 return ControlFlow::Break(());
             };
-            let server_msg = ServerMessage {
-                msg_type: ServerMessageType::Joined,
-                data: json!(format!("{} joined.", name)),
-            };
-            if state.room.tx.send(server_msg).is_err() {
-                return ControlFlow::Break(());
-            };
+
+            state.join_room(1, socket_addr).await;
         }
         ClientMessageType::Chat => {
             let chat_msg: ChatMessage = match serde_json::from_value(client_msg.data.clone()) {
@@ -220,12 +212,13 @@ async fn process_client_message(
                     return ControlFlow::Continue(());
                 }
             };
-            let server_msg = ServerMessage {
-                msg_type: ServerMessageType::NewMessage,
-                data: client_msg.data,
-            };
-            state.room.state.write().await.messages.push(chat_msg);
-            let _ = state.room.tx.send(server_msg);
+            // let server_msg = ServerMessage {
+            //     msg_type: ServerMessageType::NewMessage,
+            //     data: client_msg.data,
+            // };
+            state.send_message(1, client_msg.data.clone()).await;
+            // state.room.state.write().await.messages.push(chat_msg);
+            // let _ = state.room.tx.send(server_msg);
         }
     }
     ControlFlow::Continue(())

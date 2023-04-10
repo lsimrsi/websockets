@@ -8,7 +8,8 @@ use axum::{
     Router,
 };
 use client::Client;
-use tokio::sync::{broadcast, RwLock};
+use serde_json::json;
+use tokio::sync::{broadcast, mpsc::Sender, RwLock};
 
 use std::sync::Arc;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
@@ -24,46 +25,131 @@ use serde::{Deserialize, Serialize};
 
 mod client;
 
-type SharedState = Arc<ServerState>;
+type SharedState = Arc<Server>;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
     name: String,
     message: String,
 }
 
-pub struct Room {
-    state: RwLock<RoomState>,
-    tx: broadcast::Sender<ServerMessage>,
+pub struct Server {
+    rooms: HashMap<u32, broadcast::Sender<ServerMessage>>,
+    /// Put entire server state behind one RwLock to prevent deadlocks.
+    state: RwLock<ServerState>,
 }
 
-impl Room {
-    pub fn new() -> Room {
+impl Server {
+    pub fn new() -> Server {
         let (tx, _rx) = broadcast::channel(100);
-        Room {
-            state: RwLock::new(RoomState::new()),
-            tx,
+
+        let rooms = [(1, tx)].into();
+        let room_messages = [(1, Vec::new())].into();
+        // let room_users = [(1, Vec::new())].into();
+
+        let state = ServerState {
+            sockets: HashMap::new(),
+            room_messages,
+            // room_users,
+        };
+        Server {
+            rooms,
+            state: RwLock::new(state),
         }
     }
-}
 
-pub struct RoomState {
-    users: Vec<String>,
-    messages: Vec<ChatMessage>,
-}
+    pub async fn get_messages_in_room(&self, room_number: u32) -> Vec<ChatMessage> {
+        match self.state.read().await.room_messages.get(&room_number) {
+            Some(m) => m.clone(),
+            None => Vec::new(),
+        }
+    }
 
-impl RoomState {
-    pub fn new() -> RoomState {
-        RoomState {
-            users: Vec::new(),
-            messages: Vec::new(),
+    pub async fn add_socket(&self, socket_addr: SocketAddr, sender: Sender<ServerMessage>) {
+        self.state.write().await.sockets.insert(
+            socket_addr,
+            SocketState {
+                name: "".to_string(),
+                sender,
+                room: 1,
+            },
+        );
+    }
+
+    pub async fn join_room(&self, desired_room: u32, socket_addr: SocketAddr) {
+        // First check if user is subscribing to a room they are already in.
+        let mut current_room = 0;
+        let mut name = "".to_string();
+        if let Some(socket) = self.state.read().await.sockets.get(&socket_addr) {
+            if socket.room == desired_room {
+                return;
+            }
+            current_room = socket.room;
+            name = socket.name.clone();
+        }
+
+        // Remove user from old room.
+        // if let Some(room_users) = self.state.write().await.room_users.get_mut(&current_room) {
+        //     room_users.retain(|n| n != &name);
+        // }
+
+        // // Add user to new room.
+        // if let Some(room_users) = self.state.write().await.room_users.get_mut(&desired_room) {
+        //     room_users.push(name.clone());
+        // }
+
+        //  Send message to all users in room letting them know a new user joined.
+        let server_msg = ServerMessage {
+            msg_type: ServerMessageType::Joined,
+            data: json!(format!("{} joined.", name)),
+        };
+        let sockets = &self.state.read().await.sockets;
+
+        for socket in sockets.values().filter(|s| s.room == desired_room) {
+            socket.sender.send(server_msg.clone()).await;
+        }
+    }
+
+    pub async fn is_name_available(&self, desired_name: &str) -> bool {
+        let sockets = &self.state.read().await.sockets;
+        let names: Vec<&String> = sockets.values().map(|s| &s.name).collect();
+
+        !names.contains(&&desired_name.to_string())
+    }
+
+    pub async fn set_name(&self, name: String, socket_addr: SocketAddr) {
+        if let Some(socket) = self.state.write().await.sockets.get_mut(&socket_addr) {
+            socket.name = name;
+        }
+    }
+
+    pub async fn send_message(&self, room: u32, data: serde_json::Value) {
+        let sockets = &self.state.read().await.sockets;
+
+        let server_msg = ServerMessage {
+            msg_type: ServerMessageType::NewMessage,
+            data,
+        };
+
+        for socket in sockets.values().filter(|s| s.room == room) {
+            socket.sender.send(server_msg.clone()).await;
         }
     }
 }
 
 pub struct ServerState {
-    clients: HashMap<SocketAddr, String>,
-    room: Room,
+    sockets: HashMap<SocketAddr, SocketState>,
+    room_messages: HashMap<u32, Vec<ChatMessage>>,
+    // room_users: HashMap<u32, Vec<String>>,
+}
+
+/// Ties state for individual socket to a SocketAddr in server's state.
+pub struct SocketState {
+    /// User's name.
+    name: String,
+    sender: Sender<ServerMessage>,
+    /// The room user is currently in.
+    room: u32,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -106,10 +192,7 @@ async fn main() {
         .init();
 
     let assets_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-    let shared_state = Arc::new(ServerState {
-        clients: HashMap::new(),
-        room: Room::new(),
-    });
+    let shared_state = Arc::new(Server::new());
 
     let app = Router::new()
         .fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
