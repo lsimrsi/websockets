@@ -205,17 +205,10 @@ async fn process_client_message(
             state.join_room(1, socket_addr).await;
         }
         ClientMessageType::Chat => {
-            let chat_msg: ChatMessage = match serde_json::from_value(client_msg.data.clone()) {
-                Ok(cm) => cm,
-                Err(err) => {
-                    println!("Could not deserialize chat message: {}", err);
-                    return ControlFlow::Continue(());
-                }
+            if let Err(err) = serde_json::from_value::<ChatMessage>(client_msg.data.clone()) {
+                println!("Could not deserialize chat message: {}", err);
+                return ControlFlow::Continue(());
             };
-            // let server_msg = ServerMessage {
-            //     msg_type: ServerMessageType::NewMessage,
-            //     data: client_msg.data,
-            // };
             state.send_message(1, client_msg.data.clone()).await;
             // state.room.state.write().await.messages.push(chat_msg);
             // let _ = state.room.tx.send(server_msg);

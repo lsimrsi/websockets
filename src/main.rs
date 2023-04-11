@@ -9,7 +9,7 @@ use axum::{
 };
 use client::Client;
 use serde_json::json;
-use tokio::sync::{broadcast, mpsc::Sender, RwLock};
+use tokio::sync::{mpsc::Sender, RwLock};
 
 use std::sync::Arc;
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf};
@@ -34,26 +34,20 @@ pub struct ChatMessage {
 }
 
 pub struct Server {
-    rooms: HashMap<u32, broadcast::Sender<ServerMessage>>,
+    // rooms: HashMap<u32, broadcast::Sender<ServerMessage>>,
     /// Put entire server state behind one RwLock to prevent deadlocks.
     state: RwLock<ServerState>,
 }
 
 impl Server {
     pub fn new() -> Server {
-        let (tx, _rx) = broadcast::channel(100);
-
-        let rooms = [(1, tx)].into();
         let room_messages = [(1, Vec::new())].into();
-        // let room_users = [(1, Vec::new())].into();
 
         let state = ServerState {
             sockets: HashMap::new(),
             room_messages,
-            // room_users,
         };
         Server {
-            rooms,
             state: RwLock::new(state),
         }
     }
@@ -78,25 +72,12 @@ impl Server {
 
     pub async fn join_room(&self, desired_room: u32, socket_addr: SocketAddr) {
         // First check if user is subscribing to a room they are already in.
-        let mut current_room = 0;
+        // let mut current_room = 0;
         let mut name = "".to_string();
-        if let Some(socket) = self.state.read().await.sockets.get(&socket_addr) {
-            if socket.room == desired_room {
-                return;
-            }
-            current_room = socket.room;
+        if let Some(socket) = self.state.write().await.sockets.get_mut(&socket_addr) {
+            socket.room = desired_room;
             name = socket.name.clone();
         }
-
-        // Remove user from old room.
-        // if let Some(room_users) = self.state.write().await.room_users.get_mut(&current_room) {
-        //     room_users.retain(|n| n != &name);
-        // }
-
-        // // Add user to new room.
-        // if let Some(room_users) = self.state.write().await.room_users.get_mut(&desired_room) {
-        //     room_users.push(name.clone());
-        // }
 
         //  Send message to all users in room letting them know a new user joined.
         let server_msg = ServerMessage {
@@ -106,7 +87,7 @@ impl Server {
         let sockets = &self.state.read().await.sockets;
 
         for socket in sockets.values().filter(|s| s.room == desired_room) {
-            socket.sender.send(server_msg.clone()).await;
+            let _ = socket.sender.send(server_msg.clone()).await;
         }
     }
 
@@ -132,7 +113,7 @@ impl Server {
         };
 
         for socket in sockets.values().filter(|s| s.room == room) {
-            socket.sender.send(server_msg.clone()).await;
+            let _ = socket.sender.send(server_msg.clone()).await;
         }
     }
 }
