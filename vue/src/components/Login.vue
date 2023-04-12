@@ -1,6 +1,6 @@
 <script setup lang="ts">
   import { useNameStore, useSocketStore } from "../stores";
-  // import Input from "./input.svelte";
+  import Input from "./Input.vue";
 
   const name = useNameStore();
   const socket = useSocketStore();
@@ -14,7 +14,6 @@
 
 <template>
   <form class="m-auto" @submit="onSubmit">
-    <label>Please enter your name</label>
-    <input v-model="name.name"/>
+    <Input label="Please enter your name:" id="name" v-model="name.name" />
   </form>
 </template>
