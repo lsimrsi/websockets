@@ -14,10 +14,10 @@
 <template>
   <div class="flex flex-col mb-4">
     <span class="`font-bold min-w-[8rem]`">
-      {chatMsg.name}
+      {{chatMsg.name}}
     </span>
     <span class="border-l-2 pl-4 text-zinc-500">
-      {chatMsg.message}
+      {{chatMsg.message}}
     </span>
   </div>
 </template>
