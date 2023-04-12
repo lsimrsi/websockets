@@ -13,7 +13,7 @@
 </script>
 
 <template>
-  <form class="m-auto" :submit={onSubmit}>
+  <form class="m-auto" @submit="onSubmit">
     <label>Please enter your name</label>
     <input v-model="name.name"/>
   </form>
