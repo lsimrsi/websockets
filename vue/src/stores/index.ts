@@ -8,7 +8,7 @@ export const useSocketStore = defineStore('socket', () => {
     socket.value = newSocket;
   }
 
-  return { messages: socket, set }
+  return { socket, set }
 })
 
 export const useMessagesStore = defineStore('messages', () => {
@@ -26,7 +26,7 @@ export const useNameStore = defineStore('name', () => {
     name.value = newName;
   }
 
-  return { messages: name, set }
+  return { name, set }
 })
 
 export const useHasRegisteredNameStore = defineStore('hasRegisteredName', () => {
@@ -35,5 +35,5 @@ export const useHasRegisteredNameStore = defineStore('hasRegisteredName', () => 
     hasRegisteredName.value = didRegister;
   }
 
-  return { messages: hasRegisteredName, set }
+  return { hasRegisteredName, set }
 })
