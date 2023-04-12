@@ -2,6 +2,7 @@
 import { ref, onMounted, onUpdated, type Ref } from 'vue'
 import { useHasRegisteredNameStore, useMessagesStore, useNameStore, useSocketStore, useToastsStore } from '@/stores'
 import Login from './components/Login.vue'
+import Input from './components/Input.vue'
 import ChatMessage from './components/ChatMessage.vue'
 import { ToastType } from './interfaces';
 import { v4 as uuidv4 } from "uuid";
@@ -103,7 +104,7 @@ onMounted(() => {
       </ul>
 
       <form class="flex flex-col" @submit="onSubmit">
-        <input
+        <Input
           classes="mb-2"
           label="Enter message"
           id="chat-message"
