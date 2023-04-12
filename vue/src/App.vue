@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, type Ref } from 'vue'
+import { ref, onMounted, onUpdated, type Ref } from 'vue'
 import { useHasRegisteredNameStore, useMessagesStore, useNameStore, useSocketStore, useToastsStore } from '@/stores'
 import Login from './components/Login.vue'
 import ChatMessage from './components/ChatMessage.vue'
@@ -15,7 +15,7 @@ const toasts = useToastsStore();
 const name = useNameStore();
 const hasRegisteredName = useHasRegisteredNameStore();
 
-watch(messages, () => {
+onUpdated(() => {
   ul.value?.scrollTo(0, ul.value.scrollHeight);
 })
 
