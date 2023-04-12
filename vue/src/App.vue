@@ -1,47 +1,119 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
-import TheWelcome from './components/TheWelcome.vue'
+import { ref, watch, onMounted, type Ref } from 'vue'
+import { useHasRegisteredNameStore, useMessagesStore, useNameStore, useSocketStore, useToastsStore } from '@/stores'
+import Login from './components/Login.vue'
+import ChatMessage from './components/ChatMessage.vue'
+import { ToastType } from './interfaces';
+import { v4 as uuidv4 } from "uuid";
+
+let message = ref("");
+let ul: Ref<HTMLUListElement | null> = ref(null);
+
+const messages = useMessagesStore();
+const socket = useSocketStore();
+const toasts = useToastsStore();
+const name = useNameStore();
+const hasRegisteredName = useHasRegisteredNameStore();
+
+watch(messages, () => {
+  ul.value?.scrollTo(0, ul.value.scrollHeight);
+})
+
+onMounted(() => {
+    if (socket.socket != null) return;
+
+    let newSocket = new WebSocket("ws://127.0.0.1:8080/ws");
+
+    newSocket.onopen = function (this: WebSocket, ev: Event) {
+      console.log("Connected");
+    };
+
+    newSocket.onclose = function () {
+      console.log("Disconnected");
+      socket.socket = null;
+    };
+
+    newSocket.onmessage = function (res: MessageEvent<any>) {
+      console.log("res.data", res.data);
+
+      let serverMsg = JSON.parse(res.data);
+
+      switch (serverMsg.msg_type) {
+        case "AllMessages":
+          messages.messages = serverMsg.data;
+          break;
+        case "NewMessage":
+          messages.messages = [...messages.messages, serverMsg.data];
+          break;
+        case "NameTaken":
+          let item = {
+            type: ToastType.Client,
+            message: "Name has already been taken.",
+            uuid: uuidv4(),
+          };
+          toasts.add(item);
+          hasRegisteredName.hasRegisteredName = false;
+          break;
+        case "NameRegistered":
+          console.log("Name registered");
+          hasRegisteredName.hasRegisteredName = true;
+          break;
+        case "Joined":
+          messages.messages = [
+            ...messages.messages,
+            { name: serverMsg.data, message: "Hello, world!" },
+          ];
+          break;
+      }
+
+      console.log("messages", messages.messages);
+    };
+
+    socket.socket = newSocket;
+  });
+
+  function onSubmit(e: any) {
+    e.preventDefault();
+    if (socket.socket == null) {
+      console.log("Socket is null");
+      return;
+    }
+
+    if (message.value.trim() === "") {
+      console.log("Message was empty.");
+      return;
+    }
+
+    socket.sendMessage({ msg_type: "Chat", data: { name: name.name, message: message.value } });
+    message.value = "";
+  }
+
 </script>
 
 <template>
-  <header>
-    <img alt="Vue logo" class="logo" src="./assets/logo.svg" width="125" height="125" />
+<main class="flex h-screen overflow-hidden bg-zinc-50">
+  <!-- <Toasts /> -->
+    <Login v-if="!hasRegisteredName.hasRegisteredName"/>
+    <div v-else class="grid grid-cols-1 grid-rows-2 m-auto h-4/5 w-4/5 gap-2">
+      <ul
+        class="overflow-y-scroll p-4 border rounded-lg bg-white"
+        ref="ul"
+      >
+          <li v-for="msg in messages.messages"><ChatMessage :chatMsg="msg" /></li>
+      </ul>
 
-    <div class="wrapper">
-      <HelloWorld msg="You did it!" />
+      <form class="flex flex-col" @submit="onSubmit">
+        <input
+          classes="mb-2"
+          label="Enter message"
+          id="chat-message"
+          v-model="message"
+        />
+        <input type="submit" classes="w-fit" id="send-message" value="Send" />
+      </form>
     </div>
-  </header>
-
-  <main>
-    <TheWelcome />
-  </main>
+</main>
 </template>
 
 <style scoped>
-header {
-  line-height: 1.5;
-}
-
-.logo {
-  display: block;
-  margin: 0 auto 2rem;
-}
-
-@media (min-width: 1024px) {
-  header {
-    display: flex;
-    place-items: center;
-    padding-right: calc(var(--section-gap) / 2);
-  }
-
-  .logo {
-    margin: 0 2rem 0 0;
-  }
-
-  header .wrapper {
-    display: flex;
-    place-items: flex-start;
-    flex-wrap: wrap;
-  }
-}
 </style>
